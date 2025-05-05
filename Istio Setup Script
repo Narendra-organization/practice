@@ -1,0 +1,78 @@
+#!/bin/bash
+
+# Set Istio version and target architecture
+ISTIO_VERSION=1.25.2
+TARGET_ARCH=x86_64
+
+# Download and install Istio to /tmp
+cd /tmp
+curl -L https://istio.io/downloadIstio | ISTIO_VERSION=$ISTIO_VERSION TARGET_ARCH=$TARGET_ARCH sh -
+
+# Change to Istio directory
+cd istio-$ISTIO_VERSION
+
+# Add Istio binaries to the PATH
+export PATH=$PWD/bin:$PATH
+
+# Install Istio with default profile
+istioctl install --set profile=default -y
+
+# Wait for Istio pods to be ready
+kubectl wait --for=condition=Ready pods --all -n istio-system --timeout=120s
+
+# Apply Bookinfo sample app
+kubectl apply -f samples/bookinfo/platform/kube/bookinfo.yaml
+
+# Apply Bookinfo gateway config
+kubectl apply -f samples/bookinfo/networking/bookinfo-gateway.yaml
+
+# Apply Bookinfo destination rule
+kubectl apply -f samples/bookinfo/networking/destination-rule-all.yaml
+
+# Sleep to allow services to start
+sleep 10
+
+# Get external IP of the host
+PUBLIC_IP=$(curl -s http://checkip.amazonaws.com)
+
+# Get Istio ingress port (NodePort)
+ISTIO_PORT=$(kubectl get svc istio-ingressgateway -n istio-system -o jsonpath='{.spec.ports[?(@.port==80)].nodePort}')
+
+# Show Bookinfo URL
+echo "Access Bookinfo at: http://$PUBLIC_IP:$ISTIO_PORT/productpage"
+
+# Label default namespace for ambient mode
+kubectl label namespace default istio.io/dataplane-mode=ambient --overwrite
+
+# Apply Prometheus addon
+kubectl apply -f samples/addons/prometheus.yaml
+
+# Apply Kiali addon
+kubectl apply -f samples/addons/kiali.yaml
+
+# Apply Grafana addon
+kubectl apply -f samples/addons/grafana.yaml
+
+# Patch Prometheus service to NodePort
+kubectl patch svc prometheus -n istio-system -p '{"spec": {"type": "NodePort"}}'
+
+# Patch Kiali service to NodePort
+kubectl patch svc kiali -n istio-system -p '{"spec": {"type": "NodePort"}}'
+
+# Patch grafana service to NodePort
+kubectl patch svc grafana -n istio-system -p '{"spec": {"type": "NodePort"}}'
+
+# Sleep to allow services to start
+sleep 10
+
+# Get Prometheus NodePort
+PROMETHEUS_PORT=$(kubectl get svc prometheus -n istio-system -o jsonpath='{.spec.ports[?(@.port==9090)].nodePort}')
+
+# Get Kiali NodePort
+KIALI_PORT=$(kubectl get svc kiali -n istio-system -o jsonpath='{.spec.ports[?(@.port==20001)].nodePort}')
+
+# Show Prometheus URL
+echo "Prometheus is available at: http://$PUBLIC_IP:$PROMETHEUS_PORT"
+
+# Show Kiali URL
+echo "Kiali is available at: http://$PUBLIC_IP:$KIALI_PORT"
